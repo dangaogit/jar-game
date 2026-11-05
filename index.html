@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>JarGame · J2ME 网页模拟器</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>JarGame</h1>
+      <label class="btn primary">
+        导入 jar
+        <input id="file" type="file" accept=".jar,.jad,application/java-archive" hidden />
+      </label>
+      <span id="title" class="game-title">未加载游戏</span>
+      <span id="stats" class="stats"></span>
+    </header>
+    <main class="layout">
+      <section class="phone">
+        <div class="screen-wrap" id="drop">
+          <canvas id="screen" width="240" height="320"></canvas>
+          <div id="overlay" class="overlay" hidden></div>
+          <div id="hint" class="hint">把 .jar 拖到这里，或点击「导入 jar」</div>
+        </div>
+        <div class="keypad" id="keypad"></div>
+      </section>
+      <aside class="side">
+        <section class="panel">
+          <h2>键位</h2>
+          <table class="keymap" id="keymap"></table>
+        </section>
+        <section class="panel log-panel">
+          <h2>运行日志</h2>
+          <pre id="log"></pre>
+        </section>
+      </aside>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

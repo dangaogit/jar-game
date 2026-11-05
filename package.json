@@ -1,0 +1,26 @@
+{
+  "name": "jar-game",
+  "version": "0.1.0",
+  "private": true,
+  "description": "J2ME (MIDP/CLDC) game emulator for the web, written in TypeScript",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "predev": "npm run build:rt",
+    "dev": "vite",
+    "build": "npm run build:rt && tsc --noEmit && vite build",
+    "build:rt": "node scripts/build-rt.mjs",
+    "build:fixtures": "node scripts/build-fixtures.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build:rt && npm run build:fixtures && vitest run"
+  },
+  "dependencies": {
+    "fflate": "0.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.6",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vitest": "5.1.0"
+  }
+}
