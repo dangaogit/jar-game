@@ -63,6 +63,32 @@ export interface ScreenModel {
   selected: number;
 }
 
+export const BILLING = {
+  /** WMA MessageConnection.send */
+  SMS: 1,
+  /** com.samsung.util.SMS.send */
+  SAMSUNG_SMS: 2,
+  /** MIDlet.platformRequest */
+  PLATFORM_REQUEST: 3,
+} as const;
+
+export interface BillingRequest {
+  kind: number;
+  address: string;
+  text: string;
+  /** whether the game was told the payment went through */
+  succeeded: boolean;
+}
+
+export interface MidpState {
+  events: number[][];
+  repaintRequested: boolean;
+  painting: boolean;
+  serialRequested: boolean;
+  frames: number;
+  screenModel: ScreenModel | null;
+}
+
 export interface MidpOptions {
   width: number;
   height: number;
@@ -86,7 +112,11 @@ export class Midp {
   onScreen: ((model: ScreenModel | null) => void) | null = null;
   getScreenTexts: (() => (string | null)[] | null) | null = null;
   onDestroyed: (() => void) | null = null;
-  onPlatformRequest: ((url: string) => void) | null = null;
+  /** when true, SMS billing reports success to the game instead of failing like a phone without network */
+  billingCrack = true;
+  onBilling: ((req: BillingRequest) => void) | null = null;
+  /** the high-level screen on display, null while a Canvas is shown */
+  screenModel: ScreenModel | null = null;
 
   private events: number[][] = [];
   private repaintRequested = false;
@@ -182,6 +212,37 @@ export class Midp {
     if (ev) return ev;
     return new Promise((resolve) => (this.waiter = resolve));
   }
+
+  showScreen(model: ScreenModel | null) {
+    this.screenModel = model;
+    this.onScreen?.(model);
+  }
+
+  billing(kind: number, address: string, text: string): boolean {
+    const succeeded = kind !== BILLING.PLATFORM_REQUEST && this.billingCrack;
+    this.onBilling?.({ kind, address, text, succeeded });
+    return succeeded;
+  }
+
+  saveState(): MidpState {
+    return {
+      events: this.events.map((e) => e.slice()),
+      repaintRequested: this.repaintRequested,
+      painting: this.painting,
+      serialRequested: this.serialRequested,
+      frames: this.frames,
+      screenModel: this.screenModel,
+    };
+  }
+
+  loadState(s: MidpState) {
+    this.events = s.events.map((e) => e.slice());
+    this.repaintRequested = s.repaintRequested;
+    this.painting = s.painting;
+    this.serialRequested = s.serialRequested;
+    this.frames = s.frames;
+    this.showScreen(s.screenModel);
+  }
 }
 
 export function installMidp(vm: JVM, midp: Midp) {
@@ -207,19 +268,23 @@ export function installMidp(vm: JVM, midp: Midp) {
     },
     'getAppProperty(Ljava/lang/String;)Ljava/lang/String;': (_t, [key]) =>
       vm.strOrNull(midp.appProperties.get(vm.js(key) ?? '') ?? null),
-    'platformRequest(Ljava/lang/String;)V': (_t, [url]) => midp.onPlatformRequest?.(vm.js(url) ?? ''),
+    'platformRequest(Ljava/lang/String;)V': (_t, [url]) => {
+      midp.billing(BILLING.PLATFORM_REQUEST, vm.js(url) ?? '', '');
+    },
+    'billing(ILjava/lang/String;Ljava/lang/String;)Z': (_t, [kind, address, text]) =>
+      midp.billing(kind as number, vm.js(address) ?? '', vm.js(text) ?? ''),
     'resource(Ljava/lang/String;)[B': (_t, [name]) => {
       const n = (vm.js(name) ?? '').replace(/^\/+/, '');
       const data = vm.app.get(n);
       return data ? byteArray(vm, data) : null;
     },
-    'showCanvas()V': () => midp.onScreen?.(null),
+    'showCanvas()V': () => midp.showScreen(null),
     'showScreen(ILjava/lang/String;[Ljava/lang/String;[I[Ljava/lang/String;I)V': (
       _t,
       [kind, title, texts, types, commands, selected],
     ) => {
       const strs = (a: JValue) => ((a as JArray).data as (JObject | null)[]).map((o) => vm.js(o));
-      midp.onScreen?.({
+      midp.showScreen({
         kind: kind as number,
         title: vm.js(title),
         texts: strs(texts),

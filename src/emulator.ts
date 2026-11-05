@@ -2,6 +2,7 @@ import { unzipSync } from 'fflate';
 import { Midp } from './midp/platform';
 import { installMidp } from './midp/platform';
 import { Rms, type KeyValueStore } from './midp/rms';
+import { loadState, saveState } from './snapshot';
 import type { SurfaceFactory } from './midp/surface';
 import type { FontSizes } from './midp/graphics';
 import { JVM } from './vm/jvm';
@@ -91,10 +92,14 @@ export class Emulator {
   readonly midp: Midp;
   readonly info: GameInfo;
   readonly rms: Rms;
+  /** identifies the game across sessions (RMS, key bindings, cheats and save states are stored under it) */
+  readonly id: string;
+  private started = false;
 
   constructor(opts: EmulatorOptions) {
     this.info = gameInfo(opts.game);
-    this.rms = new Rms(opts.storage, `${this.info.name}|${this.info.vendor}`);
+    this.id = `${this.info.name}|${this.info.vendor}`;
+    this.rms = new Rms(opts.storage, this.id);
     this.vm = new JVM({ boot: opts.rt, app: opts.game, out: opts.out });
     this.midp = new Midp({
       width: opts.width ?? 240,
@@ -110,7 +115,20 @@ export class Emulator {
   start(midletIndex = 0): JThread {
     const m = this.info.midlets[midletIndex];
     if (!m) throw new Error('no MIDlet found in jar');
+    this.started = true;
     return this.vm.runMain('jargame/Boot', [m.className]);
+  }
+
+  /** Serializes the running game. Throws `SnapshotBusyError` while an asynchronous native is pending. */
+  saveState(): Uint8Array {
+    return saveState(this);
+  }
+
+  /** Resumes from `saveState()` output instead of calling `start()`. */
+  loadState(data: Uint8Array) {
+    if (this.started) throw new Error('loadState needs a fresh Emulator');
+    this.started = true;
+    loadState(this, data);
   }
 
   stop() {

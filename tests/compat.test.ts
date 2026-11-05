@@ -3,10 +3,12 @@ import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { Emulator, readJar } from '../src/emulator';
 import { HeadlessSurfaceFactory } from '../src/midp/surface';
+import { SnapshotBusyError } from '../src/snapshot';
 import { rt } from './helpers';
 
 // COMPAT_DIR=<folder of jars>
 //   [COMPAT_SAMPLE=60|all] [COMPAT_SHARD=i/n] [COMPAT_OUT=results.jsonl] [COMPAT_TIMEOUT_MS=4000]
+//   [COMPAT_SNAPSHOT=1]  (games that pass are saved, restored into a new emulator and must keep presenting frames)
 //   npx vitest run tests/compat.test.ts
 // Aggregate a results file with: node scripts/compat-report.mjs <results.jsonl...>
 const dir = process.env.COMPAT_DIR;
@@ -14,6 +16,7 @@ const sample = process.env.COMPAT_SAMPLE ?? '60';
 const [shardIndex, shardCount] = (process.env.COMPAT_SHARD ?? '0/1').split('/').map(Number);
 const outFile = process.env.COMPAT_OUT;
 const timeoutMs = Number(process.env.COMPAT_TIMEOUT_MS ?? 4000);
+const snapshot = process.env.COMPAT_SNAPSHOT === '1';
 const TARGET_FRAMES = 10;
 
 function seededShuffle<T>(items: T[], seed: number): T[] {
@@ -28,7 +31,7 @@ function seededShuffle<T>(items: T[], seed: number): T[] {
 
 export interface CompatResult {
   jar: string;
-  status: 'ok' | 'slow' | 'no-frame' | 'uncaught' | 'vm-error' | 'load-error' | 'exited';
+  status: 'ok' | 'slow' | 'no-frame' | 'uncaught' | 'vm-error' | 'load-error' | 'exited' | 'snapshot-error';
   frames: number;
   instructions: number;
   ms: number;
@@ -41,17 +44,23 @@ async function runOne(boot: Map<string, Uint8Array>, path: string, jar: string):
   const uncaught: string[] = [];
   const started = Date.now();
   let emu: Emulator;
-  try {
-    emu = new Emulator({
+  let game: Map<string, Uint8Array>;
+  const create = () => {
+    const e = new Emulator({
       rt: boot,
-      game: readJar(readFileSync(path)),
+      game,
       surfaces: new HeadlessSurfaceFactory(),
       storage: null,
       out: (s, stream) => {
         if (stream === 2 && errors.length < 40) errors.push(s.split('\n')[0].slice(0, 300));
       },
     });
-    emu.onUncaught((name, desc) => uncaught.push(`${name}: ${desc}`.slice(0, 300)));
+    e.onUncaught((name, desc) => uncaught.push(`${name}: ${desc}`.slice(0, 300)));
+    return e;
+  };
+  try {
+    game = readJar(readFileSync(path));
+    emu = create();
     emu.start();
   } catch (e) {
     const msg = String((e as Error)?.message ?? e).slice(0, 300);
@@ -63,14 +72,57 @@ async function runOne(boot: Map<string, Uint8Array>, path: string, jar: string):
   }
   const frames = emu.midp.frames;
   const halted = emu.vm.halted;
-  emu.stop();
+  let snapshotError: string | null = null;
+  if (snapshot && frames >= TARGET_FRAMES && !halted && uncaught.length === 0) {
+    snapshotError = await roundTrip(emu, create);
+  } else {
+    emu.stop();
+  }
   let status: CompatResult['status'];
   if (errors.some((e) => e.startsWith('[VM fatal]'))) status = 'vm-error';
-  else if (frames >= TARGET_FRAMES) status = 'ok';
+  else if (snapshotError) {
+    status = 'snapshot-error';
+    errors.unshift(snapshotError);
+  } else if (frames >= TARGET_FRAMES) status = 'ok';
   else if (uncaught.length) status = 'uncaught';
   else if (halted) status = 'exited';
   else status = frames > 0 ? 'slow' : 'no-frame';
   return { jar, status, frames, instructions: emu.vm.icount, ms: Date.now() - started, uncaught, errors };
+}
+
+/** saves `emu`, restores the state into a new emulator and expects it to keep presenting frames */
+async function roundTrip(emu: Emulator, create: () => Emulator): Promise<string | null> {
+  let data: Uint8Array | null = null;
+  const deadline = Date.now() + 2000;
+  try {
+    while (!data) {
+      try {
+        data = emu.saveState();
+      } catch (e) {
+        if (!(e instanceof SnapshotBusyError) || Date.now() > deadline) throw e;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+    }
+  } catch (e) {
+    emu.stop();
+    return `save: ${(e as Error).message}`.slice(0, 300);
+  }
+  emu.stop();
+  const restored = create();
+  try {
+    restored.loadState(data);
+  } catch (e) {
+    restored.stop();
+    return `load: ${(e as Error).message}`.slice(0, 300);
+  }
+  const before = restored.midp.frames;
+  const until = Date.now() + 3000;
+  while (restored.midp.frames < before + 3 && !restored.vm.halted && Date.now() < until) {
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  const gained = restored.midp.frames - before;
+  restored.stop();
+  return gained >= 3 ? null : `restored game presented ${gained} frames (${(data.length / 1024).toFixed(0)} KB state)`;
 }
 
 test.skipIf(!dir)('compatibility', async () => {

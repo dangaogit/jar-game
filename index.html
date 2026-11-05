@@ -26,9 +26,17 @@
         <div class="keypad" id="keypad"></div>
       </section>
       <aside class="side">
-        <section class="panel">
-          <h2>键位</h2>
-          <table class="keymap" id="keymap"></table>
+        <section class="panel tabbed">
+          <nav class="tabs" id="tabs">
+            <button data-tab="keys">键位</button>
+            <button data-tab="saves">存档</button>
+            <button data-tab="cheats">金手指</button>
+            <button data-tab="billing">内购</button>
+          </nav>
+          <div class="tab-body" id="panel-keys" data-panel="keys"></div>
+          <div class="tab-body" id="panel-saves" data-panel="saves" hidden></div>
+          <div class="tab-body" id="panel-cheats" data-panel="cheats" hidden></div>
+          <div class="tab-body" id="panel-billing" data-panel="billing" hidden></div>
         </section>
         <section class="panel log-panel">
           <h2>运行日志</h2>

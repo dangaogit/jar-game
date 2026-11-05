@@ -230,29 +230,281 @@ body {
   font-weight: 600;
 }
 
-.keymap {
-  border-collapse: collapse;
+.btn.small {
+  padding: 3px 10px;
+  font-size: 13px;
+  border-radius: 5px;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.btn.danger {
+  color: #ff8f8f;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.note {
+  margin: 6px 0 10px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.tabbed {
+  padding-top: 6px;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin: 0 -6px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tabs button {
+  padding: 8px 12px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.tabs button.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.tab-body {
+  max-height: 560px;
+  overflow: auto;
+}
+
+.tab-body[hidden] {
+  display: none;
+}
+
+.tab-body h3 {
+  margin: 12px 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.tab-body h3:first-child {
+  margin-top: 0;
+}
+
+.panel-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.panel-bar h3 {
+  margin: 0;
+  margin-right: auto;
+}
+
+.tab-body select,
+.tab-body input:not([type='checkbox']),
+.tab-body textarea {
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #121418;
+  color: var(--text);
+  font: inherit;
   font-size: 13px;
 }
 
-.keymap td {
-  padding: 3px 12px 3px 0;
+.tab-body input.num {
+  width: 96px;
+  font-variant-numeric: tabular-nums;
 }
 
-.keymap kbd {
+.tab-body input.name {
+  width: 100%;
+  min-width: 90px;
+}
+
+.keymap {
+  display: grid;
+  grid-template-columns: auto 1fr auto 1fr;
+  gap: 4px 12px;
+  align-items: center;
+  font-size: 13px;
+}
+
+.keymap .key-label {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.kbd {
   display: inline-block;
   padding: 1px 6px;
-  margin-right: 4px;
+  margin: 1px 4px 1px 0;
   border: 1px solid var(--line);
   border-radius: 4px;
   background: #121418;
+  color: var(--text);
   font-family: ui-monospace, monospace;
   font-size: 12px;
+  cursor: pointer;
+}
+
+.kbd:hover {
+  border-color: #ff8f8f;
+  text-decoration: line-through;
+}
+
+.kbd.add {
+  color: var(--accent);
+}
+
+.kbd.add:hover {
+  border-color: var(--accent);
+  text-decoration: none;
+}
+
+.capturing {
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.slots {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.slot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.slot .thumb {
+  width: 48px;
+  height: 64px;
+  border-radius: 4px;
+  object-fit: cover;
+  image-rendering: pixelated;
+  background: #000;
+}
+
+.slot .thumb.empty {
+  background: #121418;
+  border: 1px dashed var(--line);
+}
+
+.slot-info {
+  flex: 1;
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.slot-title {
+  font-weight: 600;
+}
+
+.slot-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.grid th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--muted);
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+.grid td {
+  padding: 4px 6px;
+  border-bottom: 1px solid #252931;
+}
+
+.grid td.loc {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, monospace;
+}
+
+.grid td.val {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.grid td.val.missing {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.grid td.actions {
+  white-space: nowrap;
+}
+
+.grid td.actions .btn + .btn {
+  margin-left: 4px;
+}
+
+.grid .ok {
+  color: #8fd18f;
+}
+
+.grid .err {
+  color: #ff8f8f;
+}
+
+.share {
+  width: 100%;
+  font-family: ui-monospace, monospace !important;
+  font-size: 12px !important;
+}
+
+.switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.switch input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
 }
 
 .log-panel pre {
   margin: 0;
-  height: 340px;
+  height: 200px;
   overflow: auto;
   font-size: 12px;
   line-height: 1.5;

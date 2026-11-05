@@ -6,7 +6,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 
-/** Networking and messaging are not available in the emulator. */
+/** Networking is not available in the emulator; sms:// connections only feed the billing hook. */
 public class Connector {
     public static final int READ = 1;
     public static final int WRITE = 2;
@@ -16,6 +16,12 @@ public class Connector {
     }
 
     public static Connection open(String name) throws IOException {
+        if (name == null) {
+            throw new IllegalArgumentException("null URL");
+        }
+        if (name.startsWith("sms://")) {
+            return new jargame.net.SmsConnection(name);
+        }
         throw new ConnectionNotFoundException(name);
     }
 

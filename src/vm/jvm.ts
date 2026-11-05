@@ -39,8 +39,6 @@ export interface VMOptions {
 
 export type NativeInstaller = (vm: JVM) => void;
 
-let nextThreadId = 1;
-
 export class JVM {
   readonly boot: Map<string, Uint8Array>;
   readonly app: Map<string, Uint8Array>;
@@ -50,6 +48,8 @@ export class JVM {
   readonly interned = new Map<string, JObject>();
   out: (text: string, stream: 1 | 2) => void;
   sliceMs: number;
+  /** bytecodes a thread runs before the scheduler moves on to the next one */
+  quantum = 20000;
   /** total bytecodes executed */
   icount = 0;
   halted = false;
@@ -58,8 +58,13 @@ export class JVM {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private channel: MessageChannel | null = null;
   private exitWaiters: ((code: number) => void)[] = [];
-  private hashSeed = 0x1234567;
+  hashSeed = 0x1234567;
+  nextThreadId = 1;
+  /** partial output lines of System.out (1) / System.err (2), as bytes */
+  readonly consoleBuf: Record<number, number[]> = { 1: [], 2: [] };
   onUncaught: ((t: JThread, ex: JObject) => void) | null = null;
+  /** runs at the start of every scheduler tick, while no Java code is executing */
+  onTick: (() => void) | null = null;
 
   constructor(opts: VMOptions) {
     this.boot = opts.boot;
@@ -281,10 +286,7 @@ export class JVM {
       const clinit = c.methods.get('<clinit>()V');
       if (clinit) {
         const f = new Frame(clinit);
-        f.onReturn = () => {
-          c.state = ClassState.Initialized;
-          c.initThread = null;
-        };
+        f.onReturn = clinitDone(c);
         t.frames.push(f);
         pushed = true;
       } else {
@@ -452,7 +454,7 @@ export class JVM {
   current: JThread | null = null;
 
   spawn(name: string, m: RtMethod, args: JValue[], javaThread: JObject | null = null): JThread {
-    const t = new JThread(nextThreadId++, name);
+    const t = new JThread(this.nextThreadId++, name);
     t.javaThread = javaThread;
     const f = new Frame(m);
     let slot = 0;
@@ -578,6 +580,13 @@ export class JVM {
   private tick() {
     this.scheduled = false;
     if (this.halted) return;
+    if (this.onTick) {
+      try {
+        this.onTick();
+      } catch (e) {
+        this.out(`[onTick] ${(e as Error)?.message ?? e}`, 2);
+      }
+    }
     const start = performance.now();
     let now = start;
     for (;;) {
@@ -588,7 +597,7 @@ export class JVM {
         ran = true;
         this.current = t;
         try {
-          execute(this, t, 20000);
+          execute(this, t, this.quantum);
         } catch (e) {
           this.current = null;
           this.fatal(e);
@@ -666,4 +675,12 @@ export class JVM {
     this.ensureInit(t, cls);
     return t;
   }
+}
+
+/** `Frame.onReturn` of a `<clinit>` frame */
+export function clinitDone(c: RtClass): () => void {
+  return () => {
+    c.state = ClassState.Initialized;
+    c.initThread = null;
+  };
 }

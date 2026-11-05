@@ -75,7 +75,7 @@ function parseIntRadix(vm: JVM, s: string | null, radix: number, bits: 32 | 64):
 }
 
 export function installLang(vm: JVM) {
-  const consoleBuf: Record<number, number[]> = { 1: [], 2: [] };
+  const consoleBuf = vm.consoleBuf;
 
   vm.registerNatives('java/lang/Object', {
     'getClass()Ljava/lang/Class;': (_t, [self]) => vm.classObject((self as JObject).cls),
@@ -522,6 +522,8 @@ function systemProperty(key: string | null): string | null {
       return 'MIDP-2.0';
     case 'microedition.locale':
       return 'zh-CN';
+    case 'wireless.messaging.sms.smsc':
+      return '+8613800100500';
     default:
       return null;
   }

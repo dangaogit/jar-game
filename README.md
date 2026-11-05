@@ -15,7 +15,7 @@ JarGame 用 TypeScript 从零实现了一个 Java 字节码解释器，并配套
 
 ## 当前状态
 
-项目处于**早期阶段**，正在进行 [ROADMAP](#roadmap) 的第一阶段，API 和存档格式都可能变化。
+项目处于**早期阶段**，第一阶段（内核兼容性）仍在进行，第二阶段的键位、存档、金手指和内购破解已经可用。API 和存档格式都可能变化。
 
 在 2301 个真实游戏 jar 组成的测试集上，**2184 个（94.9%）通过首帧测试**，即 4 秒内启动并输出 10 帧以上画面。
 
@@ -50,7 +50,8 @@ JarGame 用 TypeScript 从零实现了一个 Java 字节码解释器，并配套
 - [x] `lcdui.game`：`GameCanvas`、`Sprite`、`TiledLayer`、`LayerManager`
 - [x] RMS：`RecordStore`，按游戏持久化到浏览器 `localStorage`
 - [x] Nokia UI API（`FullCanvas`、`DirectGraphics`、`DeviceControl`、`Sound`）、Samsung API（`AudioClip`、`SMS` 等）
-- [x] MMAPI `Player` 状态机、GCF 网络与 WMA 短信接口（均为空实现，游戏调用不会报错）
+- [x] MMAPI `Player` 状态机、GCF 网络（空实现，游戏调用不会报错）
+- [x] WMA 短信（`sms://`）与 Samsung `SMS`：不真正发送，交给宿主的计费拦截决定成功或失败
 - [ ] 音频输出：MIDI（WebAssembly 合成器 + 音色库）、WAV（Web Audio）、`ToneControl`；Nokia `Sound`、Samsung `AudioClip` 接入同一后端
 - [ ] 可选 API：蓝牙（JSR-82）、PIM、FileConnection、传感器
 - 3D（M3G、Mascot Capsule）暂不在计划内
@@ -81,15 +82,15 @@ JarGame 用 TypeScript 从零实现了一个 Java 字节码解释器，并配套
 
 **键位与存档**
 
-- [ ] 键位映射自定义，按游戏保存
-- [ ] RMS 存档导入导出（底层 `Rms.exportJson` / `importJson` 已就绪，缺界面）
-- [ ] 即时存档 / 读档：序列化堆、线程栈与 native 对象，支持多个存档槽
+- [x] 键位映射自定义，按游戏保存
+- [x] RMS 存档导入导出
+- [x] 即时存档 / 读档：序列化堆、线程栈与 native 对象（含图片像素），4 个存档槽，可导出为文件
 
 **增强功能**
 
 - [ ] 游戏加速 / 减速：调节虚拟机时钟与调度速率
-- [ ] 金手指：内存数值搜索、修改与锁定，金手指码保存与分享
-- [ ] 内购破解：拦截短信计费（WMA、Samsung `SMS`）与 `platformRequest` 等付费调用，模拟支付成功
+- [x] 金手指：内存数值搜索、修改与锁定，金手指码保存与分享
+- [x] 内购破解：拦截短信计费（WMA、Samsung `SMS`）并模拟支付成功，`platformRequest` 只记录
 - [ ] 游戏录制：截图、录制视频（WebM / GIF）、按键录制与回放
 
 ### 第三阶段：在线体验网站
@@ -133,6 +134,8 @@ npm run build   # 产物在 dist/
 
 ### 默认键位
 
+可在右侧「键位」面板修改：点击「+」后按下键盘按键即可绑定，点击已绑定的按键可移除。修改按游戏单独保存；未加载游戏时修改的是所有游戏的默认键位。
+
 | 手机按键 | 键盘 |
 |---|---|
 | 方向键 | 方向键 |
@@ -143,6 +146,29 @@ npm run build   # 产物在 dist/
 | `*` / `#` | Z / X（或小键盘 `*` / `/`） |
 | 数字 0-9 | 主键盘或小键盘数字 |
 
+### 存档
+
+「存档」面板提供两种存档：
+
+- **即时存档**：保存游戏此刻的完整运行状态（虚拟机堆、线程栈、画面、图片像素和 RMS），读档后从那一刻继续，不依赖游戏自己的存档功能。每个游戏 4 个槽位，保存在浏览器 IndexedDB 中，也可以导出为 `.jgs` 文件再读取。
+- **RMS 存档**：游戏自己通过 `RecordStore` 写入的存档，自动保存在 `localStorage`。可导出为 JSON 备份或迁移到其他浏览器，导入后游戏会重启。
+
+存档、键位和金手指都按游戏的 `MIDlet-Name` 与 `MIDlet-Vendor` 区分，与 jar 文件名无关。
+
+### 金手指
+
+「金手指」面板用来搜索和修改游戏内存中的数值，用法与 Cheat Engine 类似：
+
+1. 输入当前数值（如金币 1200）进行首次搜索；不知道具体数值时选「未知初值」。
+2. 让数值在游戏里发生变化，再用新数值（或「变大了 / 变小了 / 变化了 / 没变」）继续搜索，直到剩下少量结果。
+3. 在结果里直接改值，或「加入金手指」。金手指可以勾选「锁定」，让模拟器持续写入该值。
+
+金手指用从静态字段出发的路径定位数值（如 `com/foo/Game.inst:Lcom/foo/Game;.player:Lcom/foo/Player;.hp:I`），重启游戏或读档后依然有效。每行一条 `名称 | 数值 | 路径 [| lock]` 的文本格式，可复制分享、粘贴导入。
+
+### 内购破解
+
+很多国产 J2ME 游戏通过发送扣费短信购买关卡或道具。模拟器不会真正发送任何短信：「内购」面板开启时（默认开启），WMA `MessageConnection.send` 和 Samsung `SMS.send` 向游戏返回发送成功；关闭时表现为发送失败。每次计费请求的号码和内容都会列在面板和运行日志里。`platformRequest`（打开网页、拨号等）只记录、不执行。
+
 ## 测试
 
 ```bash
@@ -152,6 +178,8 @@ npm test
 会依次编译平台类库、编译 `tests/java` 下的 Java 测试程序，并运行：
 
 - **一致性测试**（`tests/conformance.test.ts`）：同一份 Java 程序分别在真实 JVM 和 JarGame 中运行，逐行比对输出。新增 VM 用例时，在 `tests/java/<name>/Main.java` 下加一个目录即可。
+- **存档测试**（`tests/snapshot.test.ts`）：同样的 Java 程序，每个调度时间片都存档、恢复到一个全新的模拟器再继续运行，输出仍须与真实 JVM 逐行一致。
+- **金手指测试**（`tests/cheats.test.ts`）与**内购测试**（`tests/billing.test.ts`）：后者的 Java 程序放在 `tests/midp/<name>/`，用到桌面 JVM 没有的平台 API，只编译、不生成对照输出。
 - **游戏冒烟测试**（`tests/game.test.ts`）：指定 `GAME_JAR` 时无头运行该游戏，检查无未捕获异常且能输出至少 30 帧；未指定时跳过。
 
   ```bash
@@ -165,6 +193,7 @@ npm test
 
 ```bash
 # 默认随机抽样 60 个；COMPAT_SAMPLE=all 跑全部，COMPAT_SHARD=i/n 可分片并行
+# COMPAT_SNAPSHOT=1 时，出画面的游戏还会被存档、恢复到新模拟器，并要求恢复后继续出帧
 COMPAT_DIR=/path/to/games COMPAT_SAMPLE=all COMPAT_OUT=build/compat/results.jsonl \
   npx vitest run tests/compat.test.ts
 
@@ -184,11 +213,15 @@ src/
   vm/            JVM：class 文件解析、解释器、线程调度、java.lang 的 native 实现
   midp/          MIDP 平台的宿主侧：事件、图形（Canvas 2D）、RMS 存储
   emulator.ts    组装 VM 与平台，读取 jar manifest，对外的嵌入入口
-  main.ts        Web UI
+  snapshot.ts    即时存档：整个 VM 与平台状态的序列化 / 恢复
+  cheats.ts      金手指：堆内存数值搜索、地址路径、锁定
+  keymap.ts      键位映射与按游戏保存
+  main.ts        Web UI 入口
+  ui/            各个侧边面板（键位、存档、金手指、内购）
 rt/src/          平台类库的 Java 源码（java.*、javax.microedition.*、厂商扩展），
                  与 TypeScript 宿主通过 native 方法桥接（jargame.Host）
 scripts/         构建 rt.jar、生成测试对照输出、兼容性报告、API 缺口扫描
-tests/           一致性测试、游戏冒烟测试、批量兼容性测试
+tests/           一致性、存档、金手指、内购测试，游戏冒烟测试，批量兼容性测试
 ```
 
 平台类库主要用 Java 实现，和游戏代码一样由解释器执行，只有图形、输入、存储等必须接触浏览器的部分才以 native 方法交给 TypeScript。这样大部分 MIDP 行为可以直接按规范用 Java 编写，宿主侧保持精简。

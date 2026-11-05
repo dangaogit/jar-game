@@ -1,26 +1,12 @@
 import { Emulator, readJar } from './emulator';
 import { KEY, type ScreenModel } from './midp/platform';
 import { CanvasSurfaceFactory } from './midp/surface';
-
-interface KeyBinding {
-  label: string;
-  code: number;
-  keys: string[];
-}
-
-const BINDINGS: KeyBinding[] = [
-  { label: '上', code: KEY.UP, keys: ['ArrowUp'] },
-  { label: '下', code: KEY.DOWN, keys: ['ArrowDown'] },
-  { label: '左', code: KEY.LEFT, keys: ['ArrowLeft'] },
-  { label: '右', code: KEY.RIGHT, keys: ['ArrowRight'] },
-  { label: '确定', code: KEY.FIRE, keys: ['Enter', 'Space'] },
-  { label: '左软键', code: KEY.SOFT_LEFT, keys: ['KeyQ', 'F1'] },
-  { label: '右软键', code: KEY.SOFT_RIGHT, keys: ['KeyE', 'F2'] },
-  { label: '清除', code: KEY.CLEAR, keys: ['Backspace'] },
-  { label: '*', code: KEY.STAR, keys: ['NumpadMultiply', 'KeyZ'] },
-  { label: '#', code: KEY.POUND, keys: ['NumpadDivide', 'KeyX'] },
-  ...Array.from({ length: 10 }, (_, i) => ({ label: String(i), code: KEY.NUM0 + i, keys: [`Digit${i}`, `Numpad${i}`] })),
-];
+import type { App } from './ui/app';
+import { BillingPanel } from './ui/billing-panel';
+import { CheatsPanel } from './ui/cheats-panel';
+import { $, isEditable } from './ui/dom';
+import { KeysPanel } from './ui/keys-panel';
+import { SavesPanel } from './ui/saves-panel';
 
 const KEYPAD: (string | null)[][] = [
   ['左软', '上', '右软'],
@@ -44,7 +30,6 @@ const KEYPAD_CODES: Record<string, number> = {
   ...Object.fromEntries(Array.from({ length: 10 }, (_, i) => [String(i), KEY.NUM0 + i])),
 };
 
-const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const canvas = $<HTMLCanvasElement>('screen');
 const screenCtx = canvas.getContext('2d')!;
 const overlay = $<HTMLDivElement>('overlay');
@@ -56,8 +41,8 @@ const dropEl = $<HTMLDivElement>('drop');
 
 let rtEntries: Map<string, Uint8Array> | null = null;
 let emu: Emulator | null = null;
-const keyIndex = new Map<string, number>();
-for (const b of BINDINGS) for (const k of b.keys) keyIndex.set(k, b.code);
+/** entries of the loaded jar, kept for restarts and state restores */
+let game: Map<string, Uint8Array> | null = null;
 
 function log(text: string, err = false) {
   const line = document.createElement('div');
@@ -77,21 +62,10 @@ async function loadRt(): Promise<Map<string, Uint8Array>> {
   return rtEntries;
 }
 
-async function loadGame(bytes: Uint8Array, fileName: string) {
-  emu?.stop();
-  overlay.hidden = true;
-  logEl.textContent = '';
-  const rt = await loadRt();
-  let game: Map<string, Uint8Array>;
-  try {
-    game = readJar(bytes);
-  } catch (e) {
-    log(`无法解析 ${fileName}: ${(e as Error).message}`, true);
-    return;
-  }
+function createEmulator(): Emulator {
   const e = new Emulator({
-    rt,
-    game,
+    rt: rtEntries!,
+    game: game!,
     surfaces: new CanvasSurfaceFactory(),
     storage: window.localStorage,
     out: (s, stream) => log(s, stream === 2),
@@ -100,17 +74,86 @@ async function loadGame(bytes: Uint8Array, fileName: string) {
   e.midp.onScreen = showScreen;
   e.midp.getScreenTexts = readScreenTexts;
   e.midp.onDestroyed = () => log('MIDlet 已退出');
-  e.midp.onPlatformRequest = (url) => log(`platformRequest: ${url}`);
   e.onUncaught((name, desc) => log(`线程 ${name} 未捕获异常: ${desc}`, true));
+  return e;
+}
+
+/** makes `e` the running emulator; the previous one is stopped */
+function attach(e: Emulator) {
+  if (emu !== e) emu?.stop();
   emu = e;
   (window as any).__emu = e;
   titleEl.textContent = `${e.info.name}${e.info.vendor ? ` · ${e.info.vendor}` : ''}`;
   hintEl.hidden = true;
-  log(`加载 ${fileName}: MIDlet ${e.info.midlets.map((m) => m.className).join(', ')}`);
+  for (const p of panels) p.attach(e);
+}
+
+function clearScreen() {
   screenCtx.fillStyle = '#000';
   screenCtx.fillRect(0, 0, canvas.width, canvas.height);
+}
+
+function boot() {
+  const e = createEmulator();
+  attach(e);
+  clearScreen();
   e.start();
 }
+
+async function loadGame(bytes: Uint8Array, fileName: string) {
+  emu?.stop();
+  showScreen(null);
+  logEl.textContent = '';
+  await loadRt();
+  try {
+    game = readJar(bytes);
+  } catch (e) {
+    log(`无法解析 ${fileName}: ${(e as Error).message}`, true);
+    return;
+  }
+  boot();
+  log(`加载 ${fileName}: MIDlet ${emu!.info.midlets.map((m) => m.className).join(', ')}`);
+}
+
+const app: App = {
+  get emu() {
+    return emu;
+  },
+  log,
+  restore(data) {
+    if (!game) throw new Error('请先加载游戏');
+    const e = createEmulator();
+    try {
+      e.loadState(data);
+    } catch (err) {
+      e.stop();
+      throw err;
+    }
+    attach(e);
+  },
+  restart() {
+    if (game) boot();
+  },
+  thumbnail() {
+    const c = document.createElement('canvas');
+    c.width = canvas.width / 2;
+    c.height = canvas.height / 2;
+    c.getContext('2d')!.drawImage(canvas, 0, 0, c.width, c.height);
+    return c.toDataURL('image/jpeg', 0.75);
+  },
+};
+
+const keysPanel = new KeysPanel($('panel-keys'));
+const panels = [keysPanel, new SavesPanel($('panel-saves'), app), new CheatsPanel($('panel-cheats'), app), new BillingPanel($('panel-billing'), app)];
+
+const tabs = document.querySelectorAll<HTMLButtonElement>('#tabs button');
+function selectTab(name: string) {
+  tabs.forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
+  document.querySelectorAll<HTMLElement>('[data-panel]').forEach((p) => (p.hidden = p.dataset.panel !== name));
+  localStorage.setItem('jargame:tab', name);
+}
+tabs.forEach((b) => (b.onclick = () => selectTab(b.dataset.tab!)));
+selectTab(localStorage.getItem('jargame:tab') ?? 'keys');
 
 // ---------------------------------------------------------------- screens (Form/List/Alert/TextBox)
 
@@ -204,8 +247,8 @@ function readScreenTexts(): (string | null)[] | null {
 // ---------------------------------------------------------------- input
 
 window.addEventListener('keydown', (e) => {
-  if (!emu || (e.target as HTMLElement).closest?.('.overlay')) return;
-  const code = keyIndex.get(e.code);
+  if (!emu || isEditable(e.target) || (e.target as HTMLElement).closest?.('.overlay')) return;
+  const code = keysPanel.lookup(e.code);
   if (code === undefined) return;
   e.preventDefault();
   if (e.repeat) emu.midp.keyRepeated(code);
@@ -213,8 +256,8 @@ window.addEventListener('keydown', (e) => {
 });
 
 window.addEventListener('keyup', (e) => {
-  if (!emu || (e.target as HTMLElement).closest?.('.overlay')) return;
-  const code = keyIndex.get(e.code);
+  if (!emu || isEditable(e.target) || (e.target as HTMLElement).closest?.('.overlay')) return;
+  const code = keysPanel.lookup(e.code);
   if (code === undefined) return;
   e.preventDefault();
   emu.midp.keyReleased(code);
@@ -257,14 +300,6 @@ for (const row of KEYPAD) {
   }
 }
 
-const keymapEl = $<HTMLTableElement>('keymap');
-for (const b of BINDINGS.slice(0, 10)) {
-  const tr = keymapEl.insertRow();
-  tr.insertCell().textContent = b.label;
-  tr.insertCell().innerHTML = b.keys.map((k) => `<kbd>${k.replace(/^Key|^Digit/, '')}</kbd>`).join('');
-}
-keymapEl.insertRow().insertCell().textContent = '数字键 0-9：主键盘或小键盘数字';
-
 // ---------------------------------------------------------------- loading
 
 $<HTMLInputElement>('file').addEventListener('change', async (e) => {
@@ -298,7 +333,7 @@ setInterval(() => {
   if (!emu) return;
   const frames = emu.midp.frames;
   const instr = emu.vm.icount;
-  statsEl.textContent = `${frames - lastFrames} FPS · ${((instr - lastInstr) / 1e6).toFixed(1)} M 指令/秒 · ${emu.vm.threads.length} 线程${emu.vm.halted ? ' · 已停止' : ''}`;
+  statsEl.textContent = `${Math.max(0, frames - lastFrames)} FPS · ${(Math.max(0, instr - lastInstr) / 1e6).toFixed(1)} M 指令/秒 · ${emu.vm.threads.length} 线程${emu.vm.halted ? ' · 已停止' : ''}`;
   lastFrames = frames;
   lastInstr = instr;
 }, 1000);

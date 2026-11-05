@@ -19,6 +19,9 @@ public final class Host {
     public static final int SCREEN_ALERT = 3;
     public static final int SCREEN_TEXTBOX = 4;
 
+    public static final int BILLING_SMS = 1;
+    public static final int BILLING_SAMSUNG_SMS = 2;
+
     private Host() {
     }
 
@@ -47,6 +50,9 @@ public final class Host {
     public static native String getAppProperty(String key);
 
     public static native void platformRequest(String url);
+
+    /** reports an outgoing (usually premium-rate) SMS; true when the game should see it as sent */
+    public static native boolean billing(int kind, String address, String text);
 
     /** resource bytes from the application jar (absolute path, leading '/' optional) */
     public static native byte[] resource(String name);
