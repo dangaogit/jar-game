@@ -1,7 +1,7 @@
 import type { JVM } from '../vm/jvm';
 import { bytesOf } from '../vm/natives/lang';
 import type { JArray, JObject, JValue } from '../vm/runtime';
-import type { Ctx2D, Surface, SurfaceFactory } from './surface';
+import { readPixels, type AnyCanvas, type Ctx2D, type Surface, type SurfaceFactory } from './surface';
 
 const HCENTER = 1;
 const VCENTER = 2;
@@ -287,6 +287,15 @@ export function installGraphics(vm: JVM, surfaces: SurfaceFactory, screen: () =>
     return f;
   };
   const defaultFont = () => fontSpec(0, 0, 0);
+  /** reusable staging canvas for drawRGB / drawPixels; only its top-left w x h is drawn */
+  let scratch: Surface | null = null;
+  const stage = (data: ImageData): AnyCanvas => {
+    if (!scratch || scratch.w < data.width || scratch.h < data.height) {
+      scratch = surfaces.create(Math.max(data.width, scratch?.w ?? 0), Math.max(data.height, scratch?.h ?? 0), false);
+    }
+    scratch.ctx!.putImageData(data, 0, 0);
+    return scratch.canvas!;
+  };
   const G = (o: JValue) => (o as JObject).peer as GState;
   const surf = (img: JValue): Surface => {
     if (img == null) vm.throwNew('java/lang/NullPointerException');
@@ -371,18 +380,17 @@ export function installGraphics(vm: JVM, surfaces: SurfaceFactory, screen: () =>
           argb[row * W + col] = pixelToArgb(v, format as number, !!transparency);
         }
       }
-      const tmp = surfaces.create(W, H, false);
-      tmp.ctx!.putImageData(argbToImageData(argb, 0, W, W, H, true), 0, 0);
+      const tmp = stage(argbToImageData(argb, 0, W, W, H, true));
       const t = tr as number;
       const X0 = (x as number) + g.tx;
       const Y0 = (y as number) + g.ty;
       if (t === 0) {
-        ctx.drawImage(tmp.canvas!, X0, Y0);
+        ctx.drawImage(tmp, 0, 0, W, H, X0, Y0, W, H);
         return;
       }
       const [ma, mb, mc, md, me, mf] = transformMatrix(t, W, H);
       ctx.setTransform(ma, mb, mc, md, X0 + me, Y0 + mf);
-      ctx.drawImage(tmp.canvas!, 0, 0);
+      ctx.drawImage(tmp, 0, 0, W, H, 0, 0, W, H);
       ctx.setTransform(1, 0, 0, 1, 0, 0);
     },
     '$getPixels(Ljava/lang/Object;IIIIIII)V': (_t, [self, pixels, offset, scan, x, y, w, h, format]) => {
@@ -390,7 +398,7 @@ export function installGraphics(vm: JVM, surfaces: SurfaceFactory, screen: () =>
       const H = h as number;
       const g = G(self);
       if (!g.s.ctx || W <= 0 || H <= 0) return;
-      const px = g.s.ctx.getImageData((x as number) + g.tx, (y as number) + g.ty, W, H).data;
+      const px = readPixels(g.s, (x as number) + g.tx, (y as number) + g.ty, W, H).data;
       const dst = (pixels as JArray).data as Int32Array | Int16Array;
       let p = 0;
       for (let row = 0; row < H; row++) {
@@ -577,10 +585,8 @@ export function installGraphics(vm: JVM, surfaces: SurfaceFactory, screen: () =>
       const g = G(self);
       const ctx = prep(g);
       if (!ctx) return;
-      const data = argbToImageData((rgb as JArray).data as Int32Array, offset as number, scan as number, W, H, !!alpha);
-      const tmp = surfaces.create(W, H, false);
-      tmp.ctx!.putImageData(data, 0, 0);
-      ctx.drawImage(tmp.canvas!, (x as number) + g.tx, (y as number) + g.ty);
+      const tmp = stage(argbToImageData((rgb as JArray).data as Int32Array, offset as number, scan as number, W, H, !!alpha));
+      ctx.drawImage(tmp, 0, 0, W, H, (x as number) + g.tx, (y as number) + g.ty, W, H);
     },
   });
 
@@ -641,7 +647,7 @@ export function installGraphics(vm: JVM, surfaces: SurfaceFactory, screen: () =>
       const W = w as number;
       const H = h as number;
       if (!s.ctx || W <= 0 || H <= 0) return;
-      const px = s.ctx.getImageData(x as number, y as number, W, H).data;
+      const px = readPixels(s, x as number, y as number, W, H).data;
       const dst = (out as JArray).data as Int32Array;
       let p = 0;
       for (let row = 0; row < H; row++) {

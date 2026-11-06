@@ -23,7 +23,8 @@ interface Header {
   version: number;
   game: string;
   time: number;
-  vm: { icount: number; hashSeed: number; nextThreadId: number; console: [number[], number[]] };
+  /** `clock`: game's currentTimeMillis() when saved (absent in older saves) */
+  vm: { icount: number; hashSeed: number; nextThreadId: number; console: [number[], number[]]; clock?: number };
   /** [name, state, statics, initThread, classObj] */
   classes: [string, number, Enc[], Enc, Enc][];
   interned: [string, Enc][];
@@ -93,7 +94,8 @@ class Encoder {
   private ids = new Map<object, number>();
   private order: object[] = [];
   readonly blobs: Uint8Array[] = [];
-  private now = performance.now();
+
+  constructor(private now: number) {}
 
   ref(o: object): Enc {
     let id = this.ids.get(o);
@@ -219,7 +221,7 @@ export function saveState(emu: Emulator): Uint8Array {
       throw new SnapshotBusyError(`thread ${t.name} is blocked in ${blockedNative(t) ?? 'a native method'}`);
     }
   }
-  const e = new Encoder();
+  const e = new Encoder(vm.now());
   e.ref(emu.midp.screen);
   const classes: Header['classes'] = [];
   for (const cls of vm.classes.values()) {
@@ -234,6 +236,7 @@ export function saveState(emu: Emulator): Uint8Array {
       hashSeed: vm.hashSeed,
       nextThreadId: vm.nextThreadId,
       console: [vm.consoleBuf[1].slice(), vm.consoleBuf[2].slice()],
+      clock: vm.currentTimeMillis(),
     },
     classes,
     interned: [...vm.interned].map(([s, o]) => [s, e.value(o)]),
@@ -303,7 +306,7 @@ export function readStateInfo(data: Uint8Array): StateInfo {
 
 class Decoder {
   readonly objs: unknown[] = [];
-  private now = performance.now();
+  private now: number;
 
   constructor(
     private emu: Emulator,
@@ -311,6 +314,7 @@ class Decoder {
     private blobs: Uint8Array[],
     known: object[],
   ) {
+    this.now = emu.vm.now();
     for (let i = 0; i < bodies.length; i++) this.objs.push(i < known.length ? known[i] : this.alloc(bodies[i] as Enc[]));
     for (let i = 0; i < known.length; i++) this.fillKnown(known[i], bodies[i] as Enc[]);
     for (let i = known.length; i < bodies.length; i++) this.fill(this.objs[i], bodies[i] as Enc[]);
@@ -479,6 +483,8 @@ export function loadState(emu: Emulator, data: Uint8Array) {
   const { header, blobs } = unpack(data);
   if (header.game !== emu.id) throw new Error(`存档属于「${header.game}」，与当前游戏不符`);
   const vm = emu.vm;
+  // games compare saved timestamps with the clock; a sped-up clock must not run backwards across the restore
+  if (header.vm.clock !== undefined) vm.advanceClockTo(header.vm.clock);
   for (const [name] of header.classes) {
     if (name[0] === '[') vm.arrayClass(name.slice(1));
     else vm.loadClass(name);

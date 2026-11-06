@@ -39,6 +39,9 @@ export interface VMOptions {
 
 export type NativeInstaller = (vm: JVM) => void;
 
+/** a Thread.yield() that ran fewer bytecodes than this since the thread was scheduled counts as busy-waiting */
+const YIELD_SPIN = 500;
+
 export class JVM {
   readonly boot: Map<string, Uint8Array>;
   readonly app: Map<string, Uint8Array>;
@@ -65,6 +68,12 @@ export class JVM {
   onUncaught: ((t: JThread, ex: JObject) => void) | null = null;
   /** runs at the start of every scheduler tick, while no Java code is executing */
   onTick: (() => void) | null = null;
+  private clockSpeed = 1;
+  /** performance.now() at the last speed change */
+  private clockAt = performance.now();
+  /** game time at the last speed change */
+  private clockBase = this.clockAt;
+  private readonly epoch = Date.now() - performance.now();
 
   constructor(opts: VMOptions) {
     this.boot = opts.boot;
@@ -506,10 +515,47 @@ export class JVM {
     return BLOCK;
   }
 
+  /**
+   * Game time in milliseconds on the performance.now() scale. Thread sleeps, wait timeouts and
+   * System.currentTimeMillis() all follow it, so it runs `speed` times as fast as real time.
+   */
+  now(): number {
+    return this.clockBase + (performance.now() - this.clockAt) * this.clockSpeed;
+  }
+
+  currentTimeMillis(): number {
+    return Math.floor(this.epoch + this.now());
+  }
+
+  get speed(): number {
+    return this.clockSpeed;
+  }
+
+  /** Game speed multiplier; games that pace their frames by the clock run (and render) that much faster. */
+  set speed(v: number) {
+    if (!(v > 0 && Number.isFinite(v))) throw new RangeError(`bad speed ${v}`);
+    this.clockBase = this.now();
+    this.clockAt = performance.now();
+    this.clockSpeed = v;
+    if (this.timer) this.kick();
+  }
+
+  /** Moves the game clock forward so `currentTimeMillis()` is at least `ms`. */
+  advanceClockTo(ms: number) {
+    const behind = ms - this.currentTimeMillis();
+    if (behind > 0) this.clockBase += behind;
+  }
+
   sleep(t: JThread, ms: number): typeof BLOCK {
     t.state = TState.Sleeping;
-    t.wakeAt = performance.now() + Math.max(0, ms);
+    t.wakeAt = this.now() + Math.max(0, ms);
     return BLOCK;
+  }
+
+  /** Thread.yield() */
+  yield(t: JThread): typeof BLOCK {
+    t.yielded = true;
+    return this.sleep(t, 0);
   }
 
   private isRunnable(t: JThread, now: number): boolean {
@@ -588,14 +634,18 @@ export class JVM {
       }
     }
     const start = performance.now();
-    let now = start;
+    let now = this.now();
     for (;;) {
       let ran = false;
+      /** some thread did real work rather than spin on Thread.yield() */
+      let busy = false;
+      let spinners: JThread[] | null = null;
       for (let i = 0; i < this.threads.length; i++) {
         const t = this.threads[i];
         if (!this.isRunnable(t, now)) continue;
         ran = true;
         this.current = t;
+        const before = this.icount;
         try {
           execute(this, t, this.quantum);
         } catch (e) {
@@ -605,13 +655,25 @@ export class JVM {
         }
         this.current = null;
         if (this.halted) return;
+        if (t.yielded) {
+          t.yielded = false;
+          if (this.icount - before >= YIELD_SPIN) busy = true;
+          else (spinners ??= []).push(t);
+        } else {
+          busy = true;
+        }
         if (t.state === TState.Terminated) {
           this.threads.splice(i, 1);
           i--;
         }
       }
-      now = performance.now();
-      if (!ran || now - start >= this.sliceMs) break;
+      if (!ran || performance.now() - start >= this.sliceMs) break;
+      now = this.now();
+      if (!busy) {
+        // everything runnable is busy-waiting (typically on currentTimeMillis()): back off ~1ms instead of burning the CPU
+        for (const t of spinners!) if (t.state === TState.Sleeping) t.wakeAt = now + this.clockSpeed;
+        break;
+      }
     }
     if (this.threads.length === 0) {
       this.halt(0);
@@ -629,7 +691,7 @@ export class JVM {
       this.timer = setTimeout(() => {
         this.timer = null;
         this.kick();
-      }, Math.max(0, nextWake - performance.now()));
+      }, Math.max(0, (nextWake - this.now()) / this.clockSpeed));
     }
   }
 

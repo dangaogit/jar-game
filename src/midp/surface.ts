@@ -12,6 +12,8 @@ export interface Surface {
   clipKey: string;
   fill: string;
   font: string;
+  /** ctx was created with willReadFrequently (see readPixels) */
+  readable?: boolean;
 }
 
 export interface SurfaceFactory {
@@ -29,14 +31,39 @@ function makeCanvas(w: number, h: number): AnyCanvas {
   return c;
 }
 
+function context2d(canvas: AnyCanvas, willReadFrequently: boolean): Ctx2D {
+  const ctx = canvas.getContext('2d', { willReadFrequently }) as Ctx2D;
+  ctx.imageSmoothingEnabled = false;
+  return ctx;
+}
+
+/**
+ * getImageData for pixel reads made by the game. Surfaces start out GPU-backed, which makes drawing fast but
+ * every readback slow, so the first read moves the surface to a CPU-backed (willReadFrequently) canvas.
+ */
+export function readPixels(s: Surface, x: number, y: number, w: number, h: number): ImageData {
+  if (!s.readable) {
+    const canvas = makeCanvas(s.w, s.h);
+    const ctx = context2d(canvas, true);
+    if (s.w > 0 && s.h > 0) ctx.drawImage(s.canvas!, 0, 0);
+    ctx.save();
+    s.canvas = canvas;
+    s.ctx = ctx;
+    s.readable = true;
+    s.clipKey = '';
+    s.fill = '';
+    s.font = '';
+  }
+  return s.ctx!.getImageData(x, y, w, h);
+}
+
 export class CanvasSurfaceFactory implements SurfaceFactory {
   private measureCtx: Ctx2D | null = null;
   private widthCache = new Map<string, number>();
 
   create(w: number, h: number, mutable: boolean): Surface {
     const canvas = makeCanvas(w, h);
-    const ctx = canvas.getContext('2d', { willReadFrequently: true }) as Ctx2D;
-    ctx.imageSmoothingEnabled = false;
+    const ctx = context2d(canvas, false);
     if (mutable) {
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, w, h);

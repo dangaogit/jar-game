@@ -44,6 +44,23 @@ body {
   font-size: 13px;
 }
 
+.speed {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.speed select {
+  padding: 3px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 13px;
+}
+
 .btn {
   display: inline-flex;
   align-items: center;

@@ -207,6 +207,8 @@ export class JThread {
   waitCount = 0;
   notified = false;
   interrupted = false;
+  /** the current sleep comes from Thread.yield() */
+  yielded = false;
   /** value to push when resuming from an async native */
   resume: { kind: string; value: JValue } | null = null;
   resumeThrow: JObject | null = null;

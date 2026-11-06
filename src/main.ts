@@ -38,6 +38,7 @@ const statsEl = $<HTMLSpanElement>('stats');
 const titleEl = $<HTMLSpanElement>('title');
 const hintEl = $<HTMLDivElement>('hint');
 const dropEl = $<HTMLDivElement>('drop');
+const speedEl = $<HTMLSelectElement>('speed');
 
 let rtEntries: Map<string, Uint8Array> | null = null;
 let emu: Emulator | null = null;
@@ -75,8 +76,27 @@ function createEmulator(): Emulator {
   e.midp.getScreenTexts = readScreenTexts;
   e.midp.onDestroyed = () => log('MIDlet 已退出');
   e.onUncaught((name, desc) => log(`线程 ${name} 未捕获异常: ${desc}`, true));
+  e.vm.speed = savedSpeed(e.id);
+  speedEl.value = String(e.vm.speed);
   return e;
 }
+
+const speedKey = (gameId: string) => `jargame:speed:${gameId}`;
+
+function savedSpeed(gameId: string): number {
+  const v = Number(localStorage.getItem(speedKey(gameId)));
+  return [...speedEl.options].some((o) => Number(o.value) === v) ? v : 1;
+}
+
+speedEl.addEventListener('change', () => {
+  // a focused <select> would swallow the arrow keys the game needs
+  speedEl.blur();
+  const v = Number(speedEl.value);
+  if (!emu) return;
+  emu.vm.speed = v;
+  if (v === 1) localStorage.removeItem(speedKey(emu.id));
+  else localStorage.setItem(speedKey(emu.id), String(v));
+});
 
 /** makes `e` the running emulator; the previous one is stopped */
 function attach(e: Emulator) {

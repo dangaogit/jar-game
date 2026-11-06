@@ -103,7 +103,7 @@ export function installLang(vm: JVM) {
       t.blockMon = m;
       t.notified = false;
       t.state = TState.Waiting;
-      t.wakeAt = ms === 0 ? Infinity : performance.now() + ms;
+      t.wakeAt = ms === 0 ? Infinity : vm.now() + ms;
       return BLOCK;
     },
   });
@@ -288,7 +288,7 @@ export function installLang(vm: JVM) {
   });
 
   vm.registerNatives('java/lang/System', {
-    'currentTimeMillis()J': () => BigInt(Date.now()),
+    'currentTimeMillis()J': () => BigInt(vm.currentTimeMillis()),
     'arraycopy(Ljava/lang/Object;ILjava/lang/Object;II)V': (_t, [src, sp, dst, dp, len]) =>
       arraycopy(vm, src as JObject | null, sp as number, dst as JObject | null, dp as number, len as number),
     'identityHashCode(Ljava/lang/Object;)I': (_t, [o]) => (o == null ? 0 : vm.identityHash(o as JObject)),
@@ -304,7 +304,7 @@ export function installLang(vm: JVM) {
 
   vm.registerNatives('java/lang/Thread', {
     'currentThread()Ljava/lang/Thread;': (t) => currentThreadObject(vm, t),
-    'yield()V': (t) => vm.sleep(t, 0),
+    'yield()V': (t) => vm.yield(t),
     'sleep(J)V': (t, [ms]) => {
       const n = Number(ms as bigint);
       if (n < 0) vm.throwNew('java/lang/IllegalArgumentException', 'timeout value is negative');
