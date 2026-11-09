@@ -135,6 +135,38 @@ npm run build   # 产物在 dist/，默认使用相对资源路径
 BASE_PATH=/jar-game/ npm run build
 ```
 
+### 部署到 Cloudflare Workers
+
+使用 Workers 的静态资源托管，`wrangler.jsonc` 将 `dist/` 作为发布目录，无需 Worker 服务端代码、KV、R2 或数据库。构建时编译的是平台类库 `rt.jar`，不是游戏文件。
+
+在 Cloudflare「创建应用」连接 Git 仓库后填写：
+
+| 设置 | 值 |
+|---|---|
+| 项目名称 | `jar-game`（须与 `wrangler.jsonc` 一致） |
+| 生产分支 | `main` |
+| 构建命令 | `npm run build:cf` |
+| 部署命令 | `npx wrangler deploy` |
+| 预览命令 | `npx wrangler preview` |
+| 根路径 | `/` |
+
+仓库的 `.node-version` 选择 Node 22，Wrangler 在 `package-lock.json` 中锁定版本。`build:cf` 使用现有 JDK；没有 `javac` 时，从 Adoptium 下载 Temurin 21、校验 SHA-256 并临时解压，构建结束清理。该下载过程需要访问 Adoptium 和 GitHub。云端构建固定使用根资源路径 `/`，不要沿用 GitHub Pages 的 `/jar-game/` 前缀。
+
+API Token 若显示权限不足，选择「创建新令牌」，或按照页面完整提示补齐现有令牌权限。令牌由 Cloudflare 的构建设置保存，不要写进仓库。公开试玩站点不需要开启 Cloudflare Access；需要限制访问时再开启。
+
+本地验证（不会发布）：
+
+```bash
+npm run build:cf
+npx wrangler deploy --dry-run
+# 可选：强制验证自动下载 JDK 的构建路径
+npm run build:cf -- --download-jdk
+```
+
+首次线上部署成功后，再勾选 ROADMAP 中的自动构建与部署。连接仓库后，生产分支的新推送可能自动触发正式发布。
+
+参考：[Workers 静态资源](https://developers.cloudflare.com/workers/static-assets/)、[构建设置与 API Token](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/)、[构建镜像](https://developers.cloudflare.com/workers/ci-cd/builds/build-image/)。
+
 ### 默认键位
 
 可在右侧「键位」面板修改：点击「+」后按下键盘按键即可绑定，点击已绑定的按键可移除。修改按游戏单独保存；未加载游戏时修改的是所有游戏的默认键位。
