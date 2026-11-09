@@ -9,10 +9,12 @@
   <body>
     <header class="topbar">
       <h1>JarGame</h1>
-      <label class="btn primary">
-        导入 jar
-        <input id="file" type="file" accept=".jar,.jad,application/java-archive" hidden />
-      </label>
+      <button id="import-small" class="btn primary">导入 jar</button>
+      <input id="file" type="file" accept=".jar,application/java-archive" hidden />
+      <button id="library-toggle" class="btn">游戏库</button>
+      <button id="help-toggle" class="btn">帮助</button>
+      <button id="pause" class="btn" disabled>暂停</button>
+      <button id="fullscreen" class="btn">全屏</button>
       <span id="title" class="game-title">未加载游戏</span>
       <span id="stats" class="stats"></span>
       <label class="speed" title="按比例加快游戏时钟：帧率和游戏速度一起变化，按游戏保存">
@@ -27,16 +29,46 @@
         </select>
       </label>
     </header>
-    <main class="layout">
+    <p id="notice" class="notice" role="status" hidden></p>
+    <section id="welcome" class="welcome">
+      <div class="welcome-copy">
+        <h2>把熟悉的按键，<br>带回浏览器。</h2>
+        <p>JarGame 让功能机时代的 Java 游戏，在今天的屏幕上继续。找回你的 .jar，按下开始。</p>
+        <button id="import-large" class="import-zone"><strong>拖入 .jar，开始游戏</strong><span>或点击选择文件</span></button>
+        <p class="privacy">游戏文件只在你的浏览器中运行、保存，不上传。本站不提供游戏文件。</p>
+      </div>
+      <div class="welcome-guide">
+        <div class="pixel-mark" aria-hidden="true">J<span>2</span>ME</div>
+        <h3>还记得这些按键吗？</h3>
+        <p><kbd>↑ ↓ ← →</kbd> 移动　<kbd>Enter</kbd> 确定</p>
+        <p><kbd>Q</kbd> 左软键　<kbd>E</kbd> 右软键</p>
+        <p><kbd>0–9</kbd> 数字　<kbd>P</kbd> 暂停 / 继续</p>
+        <small>手机也能玩，触屏键盘随时待命。</small>
+      </div>
+      <div class="features"><span>本地运行，保护隐私</span><span>自定义键位与分辨率</span><span>即时存档与金手指</span><span>0.5×–4× 速度控制</span></div>
+      <p class="compat-note">2301 个测试样本中，94.9% 通过首帧测试。首帧通过不代表完整可玩；部分游戏与 3D API 暂不兼容。</p>
+    </section>
+    <section id="library-section" class="library-section"><h2>我的游戏 <small>仅保存在此浏览器</small></h2><div id="library"></div></section>
+    <main class="layout" id="player" hidden>
+      <div class="display-settings">
+        <label>分辨率 <select id="resolution"></select></label>
+        <label id="custom-size" hidden><input id="width" type="number" min="96" max="800" value="240" aria-label="屏幕宽度"> × <input id="height" type="number" min="96" max="800" value="320" aria-label="屏幕高度"></label>
+        <button id="apply-resolution" class="btn small">应用并重启</button>
+        <label>缩放 <select id="scale"><option value="fit">适应窗口</option><option value="1">1× 整数倍</option><option value="2">2× 整数倍</option><option value="3">3× 整数倍</option></select></label>
+        <label><input id="auto-pause" type="checkbox" checked> 切到后台时暂停</label>
+        <button id="tools-toggle" class="btn small" aria-expanded="true">收起工具</button>
+        <span class="muted note">更改分辨率会重启，请先存档。</span>
+      </div>
       <section class="phone">
         <div class="screen-wrap" id="drop">
           <canvas id="screen" width="240" height="320"></canvas>
           <div id="overlay" class="overlay" hidden></div>
+          <button id="paused-overlay" class="paused-overlay" hidden><strong>已暂停</strong><span>点击继续 · P</span></button>
           <div id="hint" class="hint">把 .jar 拖到这里，或点击「导入 jar」</div>
         </div>
         <div class="keypad" id="keypad"></div>
       </section>
-      <aside class="side">
+      <aside class="side" id="tools">
         <section class="panel tabbed">
           <nav class="tabs" id="tabs">
             <button data-tab="keys">键位</button>
@@ -55,6 +87,16 @@
         </section>
       </aside>
     </main>
+    <dialog id="help" class="help">
+      <form method="dialog"><button class="btn">关闭帮助</button></form>
+      <h2>从一份 .jar 开始</h2>
+      <details open><summary>如何获取游戏？</summary><p>使用你已有合法使用权的 J2ME 游戏备份，或作者提供的开源、自制游戏。导入 .jar 文件即可；目前不能单独导入 .jad。</p></details>
+      <details><summary>怎样操作和暂停？</summary><p>方向键移动，Enter / 空格确定，Q / E 是左右软键，Z / X 对应 * / #。P 暂停或继续；如果 P 已绑定为游戏按键，请使用暂停按钮。可在「键位」中修改。切换到后台默认暂停，返回后手动继续。</p></details>
+      <details><summary>存档和游戏文件放在哪里？</summary><p>它们只保存在当前浏览器。即时存档保存完整运行现场；RMS 是游戏自己的存档。请在「存档」中定期导出备份。清除网站数据或使用隐私窗口可能丢失记录。移除游戏库条目不会删除存档。</p></details>
+      <details><summary>黑屏、报错或画面不完整怎么办？</summary><p>先等待几秒，查看运行日志，再尝试符合原游戏机型的分辨率。部分游戏需要尚未支持的 API，尤其是 3D 游戏。94.9% 指首帧测试通过率，不代表完整流程均可正常游玩。</p></details>
+      <details><summary>游戏会联网或扣费吗？</summary><p>游戏文件不上传，短信和计费请求只在本地模拟。内购面板可以查看拦截记录。通过 ?jar= URL 导入时，浏览器会请求该地址下载文件。</p></details>
+    </dialog>
+    <footer>JarGame · 为小屏幕里的大冒险，留一个位置。</footer>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

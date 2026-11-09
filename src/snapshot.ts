@@ -4,7 +4,7 @@
  */
 import { unzlibSync, zlibSync } from 'fflate';
 import type { Emulator } from './emulator';
-import type { MidpState } from './midp/platform';
+import { EV, type MidpState } from './midp/platform';
 import type { Surface } from './midp/surface';
 import { CpTag } from './vm/classfile';
 import { clinitDone, type JVM } from './vm/jvm';
@@ -21,6 +21,7 @@ type Enc = null | number | string | Enc[] | { [k: string]: Enc };
 
 interface Header {
   version: number;
+  paused?: boolean;
   game: string;
   time: number;
   /** `clock`: game's currentTimeMillis() when saved (absent in older saves) */
@@ -37,6 +38,8 @@ interface Header {
 }
 
 export interface StateInfo {
+  width: number;
+  height: number;
   game: string;
   time: number;
 }
@@ -229,6 +232,7 @@ export function saveState(emu: Emulator): Uint8Array {
   }
   const header: Header = {
     version: VERSION,
+    paused: emu.paused,
     game: emu.id,
     time: Date.now(),
     vm: {
@@ -297,7 +301,18 @@ function unpack(data: Uint8Array): { header: Header; blobs: Uint8Array[] } {
 
 export function readStateInfo(data: Uint8Array): StateInfo {
   const { header } = unpack(data);
-  return { game: header.game, time: header.time };
+  const [width, height] = screenSize(header);
+  return { game: header.game, time: header.time, width, height };
+}
+
+function screenSize(header: Header): [number, number] {
+  const screen = header.objs[0] as Enc[];
+  if (!screen || screen[0] !== 'S') throw new Error('存档缺少屏幕尺寸');
+  const w = screen[1] as number, h = screen[2] as number;
+  if (!Number.isInteger(w) || !Number.isInteger(h) || w < 1 || h < 1 || w > 4096 || h > 4096) {
+    throw new Error('存档屏幕尺寸无效');
+  }
+  return [w, h];
 }
 
 // ---------------------------------------------------------------------------
@@ -482,6 +497,10 @@ class Decoder {
 export function loadState(emu: Emulator, data: Uint8Array) {
   const { header, blobs } = unpack(data);
   if (header.game !== emu.id) throw new Error(`存档属于「${header.game}」，与当前游戏不符`);
+  const [width, height] = screenSize(header);
+  if (width !== emu.midp.width || height !== emu.midp.height) {
+    throw new Error(`存档分辨率为 ${width}×${height}，与当前模拟器不符`);
+  }
   const vm = emu.vm;
   // games compare saved timestamps with the clock; a sped-up clock must not run backwards across the restore
   if (header.vm.clock !== undefined) vm.advanceClockTo(header.vm.clock);
@@ -516,5 +535,6 @@ export function loadState(emu: Emulator, data: Uint8Array) {
   emu.rms.importJson(header.rms);
   emu.midp.loadState(d.value(header.midp) as MidpState);
   emu.midp.onPresent?.(emu.midp.screen);
+  if (header.paused) emu.midp.post([EV.RESUME, 0, 0]);
   vm.kick();
 }

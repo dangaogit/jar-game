@@ -112,6 +112,7 @@ export class Midp {
   onScreen: ((model: ScreenModel | null) => void) | null = null;
   getScreenTexts: (() => (string | null)[] | null) | null = null;
   onDestroyed: (() => void) | null = null;
+  onPauseComplete: (() => void) | null = null;
   /** when true, SMS billing reports success to the game instead of failing like a phone without network */
   billingCrack = true;
   onBilling: ((req: BillingRequest) => void) | null = null;
@@ -255,6 +256,7 @@ export function installMidp(vm: JVM, midp: Midp) {
       return vm.blockOn(t, '[', ev.then(intArray));
     },
     'requestRepaint()V': () => midp.requestRepaint(),
+    'pauseComplete()V': () => midp.onPauseComplete?.(),
     'repaintPending()Z': () => midp.repaintPending,
     'takeRepaint()Z': () => midp.takeRepaint(),
     'present()V': () => midp.present(),

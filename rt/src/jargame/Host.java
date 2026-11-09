@@ -30,6 +30,8 @@ public final class Host {
 
     public static native void requestRepaint();
 
+    public static native void pauseComplete();
+
     /** true while a repaint is requested or being painted */
     public static native boolean repaintPending();
 

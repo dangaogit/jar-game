@@ -1,5 +1,5 @@
 import { unzipSync } from 'fflate';
-import { Midp } from './midp/platform';
+import { EV, Midp } from './midp/platform';
 import { installMidp } from './midp/platform';
 import { Rms, type KeyValueStore } from './midp/rms';
 import { loadState, saveState } from './snapshot';
@@ -95,6 +95,28 @@ export class Emulator {
   /** identifies the game across sessions (RMS, key bindings, cheats and save states are stored under it) */
   readonly id: string;
   private started = false;
+  private pauseRequested = false;
+  private pauseTimer: ReturnType<typeof setTimeout> | null = null;
+
+  get paused(): boolean {
+    return this.pauseRequested;
+  }
+
+  pause() {
+    if (!this.started || this.paused || this.vm.halted) return;
+    this.pauseRequested = true;
+    this.midp.post([EV.PAUSE, 0, 0]);
+    this.pauseTimer = setTimeout(() => this.vm.pause(), 150);
+  }
+
+  resume() {
+    if (!this.paused || this.vm.halted) return;
+    this.pauseRequested = false;
+    if (this.pauseTimer) clearTimeout(this.pauseTimer);
+    this.pauseTimer = null;
+    this.vm.resume();
+    this.midp.post([EV.RESUME, 0, 0]);
+  }
 
   constructor(opts: EmulatorOptions) {
     this.info = gameInfo(opts.game);
@@ -109,6 +131,12 @@ export class Emulator {
       rms: this.rms,
       fontSizes: opts.fontSizes,
     });
+    this.midp.onPauseComplete = () => {
+      if (!this.pauseRequested) return;
+      if (this.pauseTimer) clearTimeout(this.pauseTimer);
+      this.pauseTimer = null;
+      this.vm.pause();
+    };
     this.vm.install(installLang, (vm) => installMidp(vm, this.midp));
   }
 
@@ -132,6 +160,8 @@ export class Emulator {
   }
 
   stop() {
+    if (this.pauseTimer) clearTimeout(this.pauseTimer);
+    this.pauseTimer = null;
     this.vm.halt(0);
   }
 

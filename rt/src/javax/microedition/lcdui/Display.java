@@ -245,10 +245,14 @@ public class Display {
                 break;
             }
             case Host.EV_PAUSE:
-                if (cur != null) {
-                    cur.$hidden();
+                try {
+                    if (cur != null) {
+                        cur.$hidden();
+                    }
+                    MIDlet.$pauseApp(midlet);
+                } finally {
+                    Host.pauseComplete();
                 }
-                MIDlet.$pauseApp(midlet);
                 break;
             case Host.EV_RESUME:
                 MIDlet.$startApp(midlet);

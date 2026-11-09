@@ -4,6 +4,7 @@ import { defineConfig } from 'vite';
 const jarDir = process.env.JAR_DIR;
 
 export default defineConfig({
+  base: process.env.BASE_PATH ?? './',
   server: {
     fs: { allow: ['.', ...(jarDir ? [jarDir] : [])] },
   },

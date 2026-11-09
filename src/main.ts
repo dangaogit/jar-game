@@ -1,4 +1,4 @@
-import { Emulator, readJar } from './emulator';
+import { Emulator, gameInfo, readJar } from './emulator';
 import { KEY, type ScreenModel } from './midp/platform';
 import { CanvasSurfaceFactory } from './midp/surface';
 import type { App } from './ui/app';
@@ -7,6 +7,9 @@ import { CheatsPanel } from './ui/cheats-panel';
 import { $, isEditable } from './ui/dom';
 import { KeysPanel } from './ui/keys-panel';
 import { SavesPanel } from './ui/saves-panel';
+import { readStateInfo } from './snapshot';
+import { DEFAULT_RESOLUTION, PRESETS, resolution, savedResolution, type Resolution } from './resolution';
+import { Library, rememberGame } from './ui/library';
 
 const KEYPAD: (string | null)[][] = [
   ['左软', '上', '右软'],
@@ -39,6 +42,14 @@ const titleEl = $<HTMLSpanElement>('title');
 const hintEl = $<HTMLDivElement>('hint');
 const dropEl = $<HTMLDivElement>('drop');
 const speedEl = $<HTMLSelectElement>('speed');
+const pauseEl = $<HTMLButtonElement>('pause');
+const pausedOverlay = $<HTMLButtonElement>('paused-overlay');
+const resolutionEl = $<HTMLSelectElement>('resolution');
+const scaleEl = $<HTMLSelectElement>('scale');
+let currentResolution = { ...DEFAULT_RESOLUTION };
+let loading = 0;
+const heldKeys = new Map<string, number>();
+let heldPointer: [number, number] | null = null;
 
 let rtEntries: Map<string, Uint8Array> | null = null;
 let emu: Emulator | null = null;
@@ -50,6 +61,10 @@ function log(text: string, err = false) {
   line.textContent = text;
   if (err) line.className = 'err';
   logEl.append(line);
+  if (err) {
+    $('notice').textContent = text;
+    $('notice').hidden = false;
+  }
   while (logEl.childElementCount > 500) logEl.firstElementChild!.remove();
   logEl.scrollTop = logEl.scrollHeight;
 }
@@ -63,15 +78,22 @@ async function loadRt(): Promise<Map<string, Uint8Array>> {
   return rtEntries;
 }
 
-function createEmulator(): Emulator {
+function createEmulator(size = currentResolution): Emulator {
   const e = new Emulator({
+    ...size,
     rt: rtEntries!,
     game: game!,
     surfaces: new CanvasSurfaceFactory(),
     storage: window.localStorage,
     out: (s, stream) => log(s, stream === 2),
   });
-  e.midp.onPresent = (screen) => screenCtx.drawImage(screen.canvas as CanvasImageSource, 0, 0);
+  e.midp.onPresent = (screen) => {
+    if (canvas.width !== screen.w || canvas.height !== screen.h) {
+      canvas.width = screen.w;
+      canvas.height = screen.h;
+    }
+    screenCtx.drawImage(screen.canvas as CanvasImageSource, 0, 0);
+  };
   e.midp.onScreen = showScreen;
   e.midp.getScreenTexts = readScreenTexts;
   e.midp.onDestroyed = () => log('MIDlet 已退出');
@@ -100,11 +122,24 @@ speedEl.addEventListener('change', () => {
 
 /** makes `e` the running emulator; the previous one is stopped */
 function attach(e: Emulator) {
+  releaseInputs();
   if (emu !== e) emu?.stop();
   emu = e;
   (window as any).__emu = e;
   titleEl.textContent = `${e.info.name}${e.info.vendor ? ` · ${e.info.vendor}` : ''}`;
   hintEl.hidden = true;
+  $('welcome').hidden = true;
+  $('library-section').hidden = true;
+  $('player').hidden = false;
+  window.scrollTo(0, 0);
+  currentResolution = { width: e.midp.width, height: e.midp.height };
+  canvas.width = e.midp.width;
+  canvas.height = e.midp.height;
+  e.midp.onPresent?.(e.midp.screen);
+  syncResolution();
+  updatePause();
+  resizeScreen();
+  if (document.hidden && $<HTMLInputElement>('auto-pause').checked) e.pause();
   for (const p of panels) p.attach(e);
 }
 
@@ -115,24 +150,35 @@ function clearScreen() {
 
 function boot() {
   const e = createEmulator();
+  try { e.start(); }
+  catch (error) { e.stop(); throw error; }
   attach(e);
+  showScreen(null);
   clearScreen();
-  e.start();
+  if (document.hidden && $<HTMLInputElement>('auto-pause').checked) { e.pause(); updatePause(); }
 }
 
 async function loadGame(bytes: Uint8Array, fileName: string) {
-  emu?.stop();
-  showScreen(null);
-  logEl.textContent = '';
-  await loadRt();
+  const request = ++loading;
   try {
-    game = readJar(bytes);
-  } catch (e) {
-    log(`无法解析 ${fileName}: ${(e as Error).message}`, true);
-    return;
+    const entries = readJar(bytes);
+    const info = gameInfo(entries);
+    if (!info.midlets.length) throw new Error('未找到可运行的 MIDlet，请选择 J2ME 游戏 jar');
+    await loadRt();
+    if (request !== loading) return;
+    const previousGame = game, previousResolution = currentResolution;
+    game = entries;
+    currentResolution = savedResolution(`${info.name}|${info.vendor}`);
+    $('notice').hidden = true;
+    try { boot(); }
+    catch (error) { game = previousGame; currentResolution = previousResolution; throw error; }
+    $('notice').hidden = true;
+    log(`加载 ${fileName}: MIDlet ${info.midlets.map((m) => m.className).join(', ')}`);
+    try { await rememberGame(entries, bytes, fileName); await library.refresh(); }
+    catch { log('游戏已启动，但浏览器无法保存游戏库；可能是存储空间不足或隐私模式。', true); }
+  } catch (error) {
+    log(`加载 ${fileName} 失败：${(error as Error).message}`, true);
   }
-  boot();
-  log(`加载 ${fileName}: MIDlet ${emu!.info.midlets.map((m) => m.className).join(', ')}`);
 }
 
 const app: App = {
@@ -142,7 +188,8 @@ const app: App = {
   log,
   restore(data) {
     if (!game) throw new Error('请先加载游戏');
-    const e = createEmulator();
+    const info = readStateInfo(data);
+    const e = createEmulator({ width: info.width, height: info.height });
     try {
       e.loadState(data);
     } catch (err) {
@@ -150,6 +197,7 @@ const app: App = {
       throw err;
     }
     attach(e);
+    showScreen(e.midp.screenModel);
   },
   restart() {
     if (game) boot();
@@ -240,7 +288,16 @@ function showScreen(model: ScreenModel | null) {
     p.textContent = model.texts[0] ?? '';
     body.append(p);
     const timeout = model.types[0];
-    if (timeout > 0 && model.commands.length === 0) alertTimer = setTimeout(() => emu?.midp.command(-1), timeout);
+    if (timeout > 0 && model.commands.length === 0 && emu) {
+      const owner = emu;
+      const deadline = owner.vm.now() + timeout;
+      const expire = () => {
+        if (owner !== emu || currentModel !== model) return;
+        if (!owner.paused && owner.vm.now() >= deadline) owner.midp.command(-1);
+        else alertTimer = setTimeout(expire, 50);
+      };
+      alertTimer = setTimeout(expire, 50);
+    }
   }
   const cmds = document.createElement('div');
   cmds.className = 'o-commands';
@@ -266,36 +323,80 @@ function readScreenTexts(): (string | null)[] | null {
 
 // ---------------------------------------------------------------- input
 
-window.addEventListener('keydown', (e) => {
-  if (!emu || isEditable(e.target) || (e.target as HTMLElement).closest?.('.overlay')) return;
-  const code = keysPanel.lookup(e.code);
-  if (code === undefined) return;
-  e.preventDefault();
-  if (e.repeat) emu.midp.keyRepeated(code);
-  else emu.midp.keyPressed(code);
+function releaseInputs() {
+  for (const code of new Set(heldKeys.values())) emu?.midp.keyReleased(code);
+  heldKeys.clear();
+  if (heldPointer) emu?.midp.pointer('released', ...heldPointer);
+  heldPointer = null;
+}
+
+function updatePause() {
+  pauseEl.disabled = !emu || emu.vm.halted;
+  pauseEl.textContent = emu?.paused ? '继续' : '暂停';
+  pausedOverlay.hidden = !emu?.paused;
+}
+function togglePause() {
+  if (!emu || emu.vm.halted) return;
+  releaseInputs();
+  if (emu.paused) emu.resume();
+  else emu.pause();
+  updatePause();
+  pauseEl.blur();
+}
+pauseEl.onclick = togglePause;
+pausedOverlay.onclick = togglePause;
+window.addEventListener('blur', releaseInputs);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) return;
+  releaseInputs();
+  if ($<HTMLInputElement>('auto-pause').checked) emu?.pause();
+  updatePause();
 });
 
-window.addEventListener('keyup', (e) => {
-  if (!emu || isEditable(e.target) || (e.target as HTMLElement).closest?.('.overlay')) return;
+window.addEventListener('keydown', (e) => {
+  if (!emu || isEditable(e.target) || $<HTMLDialogElement>('help').open) return;
   const code = keysPanel.lookup(e.code);
-  if (code === undefined) return;
+  if (e.code === 'KeyP' && code === undefined && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    if (!e.repeat) togglePause();
+    return;
+  }
+  if (emu.paused || (e.target as HTMLElement).closest?.('.overlay') || code === undefined) return;
   e.preventDefault();
-  emu.midp.keyReleased(code);
+  if (e.repeat) emu.midp.keyRepeated(code);
+  else { heldKeys.set(e.code, code); emu.midp.keyPressed(code); }
+});
+window.addEventListener('keyup', (e) => {
+  const code = heldKeys.get(e.code);
+  if (code === undefined) return;
+  heldKeys.delete(e.code);
+  e.preventDefault();
+  emu?.midp.keyReleased(code);
 });
 
 function screenPoint(e: PointerEvent): [number, number] {
   const r = canvas.getBoundingClientRect();
   return [((e.clientX - r.left) / r.width) * canvas.width, ((e.clientY - r.top) / r.height) * canvas.height];
 }
-
 canvas.addEventListener('pointerdown', (e) => {
+  if (!emu || emu.paused) return;
   canvas.setPointerCapture(e.pointerId);
-  emu?.midp.pointer('pressed', ...screenPoint(e));
+  heldPointer = screenPoint(e);
+  emu.midp.pointer('pressed', ...heldPointer);
 });
 canvas.addEventListener('pointermove', (e) => {
-  if (e.buttons) emu?.midp.pointer('dragged', ...screenPoint(e));
+  if (heldPointer && emu && !emu.paused) {
+    heldPointer = screenPoint(e);
+    emu.midp.pointer('dragged', ...heldPointer);
+  }
 });
-canvas.addEventListener('pointerup', (e) => emu?.midp.pointer('released', ...screenPoint(e)));
+const releasePointer = () => {
+  if (heldPointer) emu?.midp.pointer('released', ...heldPointer);
+  heldPointer = null;
+};
+canvas.addEventListener('pointerup', releasePointer);
+canvas.addEventListener('pointercancel', releasePointer);
+canvas.addEventListener('lostpointercapture', releasePointer);
 
 const keypad = $<HTMLDivElement>('keypad');
 for (const row of KEYPAD) {
@@ -310,33 +411,116 @@ for (const row of KEYPAD) {
     b.dataset.key = label;
     if (label.endsWith('软')) b.className = 'soft';
     const code = KEYPAD_CODES[label];
+    const inputId = `pad:${label}`;
     b.addEventListener('pointerdown', (e) => {
       e.preventDefault();
+      if (!emu || emu.paused) return;
       b.setPointerCapture(e.pointerId);
-      emu?.midp.keyPressed(code);
+      heldKeys.set(inputId, code);
+      emu.midp.keyPressed(code);
     });
-    b.addEventListener('pointerup', () => emu?.midp.keyReleased(code));
+    const release = () => {
+      if (heldKeys.delete(inputId)) emu?.midp.keyReleased(code);
+    };
+    b.addEventListener('pointerup', release);
+    b.addEventListener('pointercancel', release);
+    b.addEventListener('lostpointercapture', release);
     keypad.append(b);
   }
 }
 
 // ---------------------------------------------------------------- loading
 
-$<HTMLInputElement>('file').addEventListener('change', async (e) => {
-  const file = (e.target as HTMLInputElement).files?.[0];
-  if (file) await loadGame(new Uint8Array(await file.arrayBuffer()), file.name);
+const library = new Library($('library'), loadGame, log);
+void library.refresh();
+$('library-toggle').onclick = () => { $('library-section').hidden = !$('library-section').hidden; };
+$('import-large').onclick = () => $<HTMLInputElement>('file').click();
+$('import-small').onclick = () => $<HTMLInputElement>('file').click();
+$('help-toggle').onclick = () => {
+  if (emu && !emu.paused) { releaseInputs(); emu.pause(); updatePause(); }
+  $<HTMLDialogElement>('help').showModal();
+};
+$('fullscreen').onclick = async () => {
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else await document.body.requestFullscreen();
+  } catch { log('当前浏览器不支持全屏，请使用浏览器的全屏功能。', true); }
+};
+document.addEventListener('fullscreenchange', () => {
+  $('fullscreen').textContent = document.fullscreenElement ? '退出全屏' : '全屏';
+  resizeScreen();
 });
+$('tools-toggle').onclick = () => {
+  const tools = $('tools');
+  tools.hidden = !tools.hidden;
+  $('tools-toggle').textContent = tools.hidden ? '展开工具' : '收起工具';
+  $('tools-toggle').setAttribute('aria-expanded', String(!tools.hidden));
+};
+if (window.innerWidth <= 720) $('tools-toggle').click();
 
-dropEl.addEventListener('dragover', (e) => {
-  e.preventDefault();
-  dropEl.classList.add('dragging');
+for (const preset of PRESETS) resolutionEl.add(new Option(preset.replace('x', ' × '), preset));
+resolutionEl.add(new Option('自定义', 'custom'));
+function syncResolution() {
+  const { width, height } = currentResolution;
+  const preset = `${width}x${height}`;
+  resolutionEl.value = PRESETS.includes(preset) ? preset : 'custom';
+  $<HTMLInputElement>('width').value = String(width);
+  $<HTMLInputElement>('height').value = String(height);
+  $('custom-size').hidden = resolutionEl.value !== 'custom';
+}
+resolutionEl.onchange = () => { $('custom-size').hidden = resolutionEl.value !== 'custom'; };
+$('apply-resolution').onclick = () => {
+  if (!emu) return;
+  try {
+    const [w, h] = resolutionEl.value.split('x').map(Number);
+    const next = resolutionEl.value === 'custom'
+      ? resolution(Number($<HTMLInputElement>('width').value), Number($<HTMLInputElement>('height').value))
+      : resolution(w, h);
+    if (next.width === currentResolution.width && next.height === currentResolution.height) return;
+    currentResolution = next;
+    localStorage.setItem(`jargame:resolution:${emu.id}`, JSON.stringify(next));
+    $('notice').hidden = true;
+    boot();
+    log(`已切换至 ${next.width}×${next.height} 并重启游戏`);
+  } catch (error) { log((error as Error).message, true); }
+};
+function resizeScreen() {
+  const { width, height } = currentResolution;
+  const available = Math.max(96, Math.min(window.innerWidth <= 720 ? window.innerWidth - 52 : window.innerWidth - 380, 800));
+  const phoneTop = document.querySelector('.phone')!.getBoundingClientRect().top + window.scrollY;
+  const room = window.innerHeight - phoneTop - keypad.offsetHeight - 48;
+  const scale = scaleEl.value === 'fit'
+    ? Math.min(available / width, Math.max(128, room) / height)
+    : Number(scaleEl.value);
+  dropEl.style.width = `${Math.round(width * scale)}px`;
+  dropEl.style.height = `${Math.round(height * scale)}px`;
+}
+scaleEl.onchange = () => { scaleEl.blur(); resizeScreen(); };
+window.addEventListener('resize', resizeScreen);
+syncResolution();
+
+async function importFile(file: File) {
+  try {
+    if (!file.name.toLowerCase().endsWith('.jar')) throw new Error('请选择 .jar 游戏文件，暂不支持 .jad');
+    await loadGame(new Uint8Array(await file.arrayBuffer()), file.name);
+  } catch (error) { log((error as Error).message, true); }
+}
+$<HTMLInputElement>('file').addEventListener('change', async (e) => {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = '';
+  if (file) await importFile(file);
 });
-dropEl.addEventListener('dragleave', () => dropEl.classList.remove('dragging'));
-dropEl.addEventListener('drop', async (e) => {
+window.addEventListener('dragover', (e) => {
   e.preventDefault();
-  dropEl.classList.remove('dragging');
+  document.body.classList.add('dragging');
+});
+window.addEventListener('dragleave', (e) => { if (!e.relatedTarget) document.body.classList.remove('dragging'); });
+window.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  document.body.classList.remove('dragging');
   const file = e.dataTransfer?.files[0];
-  if (file) await loadGame(new Uint8Array(await file.arrayBuffer()), file.name);
+  if (file) await importFile(file);
 });
 
 const jarParam = new URLSearchParams(location.search).get('jar');
@@ -351,6 +535,7 @@ let lastFrames = 0;
 let lastInstr = 0;
 setInterval(() => {
   if (!emu) return;
+  updatePause();
   const frames = emu.midp.frames;
   const instr = emu.vm.icount;
   statsEl.textContent = `${Math.max(0, frames - lastFrames)} FPS · ${(Math.max(0, instr - lastInstr) / 1e6).toFixed(1)} M 指令/秒 · ${emu.vm.threads.length} 线程${emu.vm.halted ? ' · 已停止' : ''}`;

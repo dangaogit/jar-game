@@ -520,7 +520,28 @@ export class JVM {
    * System.currentTimeMillis() all follow it, so it runs `speed` times as fast as real time.
    */
   now(): number {
-    return this.clockBase + (performance.now() - this.clockAt) * this.clockSpeed;
+    return this.clockBase + (this.paused ? 0 : (performance.now() - this.clockAt) * this.clockSpeed);
+  }
+
+  private clockPaused = false;
+
+  get paused(): boolean {
+    return this.clockPaused;
+  }
+
+  pause() {
+    if (this.paused || this.halted) return;
+    this.clockBase = this.now();
+    this.clockPaused = true;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+  }
+
+  resume() {
+    if (!this.paused || this.halted) return;
+    this.clockAt = performance.now();
+    this.clockPaused = false;
+    this.kick();
   }
 
   currentTimeMillis(): number {
@@ -606,7 +627,7 @@ export class JVM {
   }
 
   kick() {
-    if (this.halted || this.scheduled) return;
+    if (this.halted || this.paused || this.scheduled) return;
     this.scheduled = true;
     if (this.timer) {
       clearTimeout(this.timer);
@@ -625,7 +646,7 @@ export class JVM {
 
   private tick() {
     this.scheduled = false;
-    if (this.halted) return;
+    if (this.halted || this.paused) return;
     if (this.onTick) {
       try {
         this.onTick();
@@ -654,7 +675,7 @@ export class JVM {
           return;
         }
         this.current = null;
-        if (this.halted) return;
+        if (this.halted || this.paused) return;
         if (t.yielded) {
           t.yielded = false;
           if (this.icount - before >= YIELD_SPIN) busy = true;

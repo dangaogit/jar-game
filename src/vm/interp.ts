@@ -277,7 +277,7 @@ export function execute(vm: JVM, t: JThread, budget: number): void {
   }
 
   outer: while (true) {
-    if (t.state !== TState.Runnable) break;
+    if (t.state !== TState.Runnable || vm.paused) break;
     const f = t.frames[t.frames.length - 1];
     if (!f) {
       t.state = TState.Terminated;
@@ -293,7 +293,7 @@ export function execute(vm: JVM, t: JThread, budget: number): void {
     let opPc = pc;
     try {
       while (true) {
-        if (--budget < 0) {
+        if (vm.paused || --budget < 0) {
           f.pc = pc;
           f.sp = sp;
           break outer;

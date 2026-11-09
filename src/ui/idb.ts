@@ -19,10 +19,13 @@ let dbPromise: Promise<IDBDatabase> | null = null;
 
 function db(): Promise<IDBDatabase> {
   dbPromise ??= new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1);
+    const req = indexedDB.open(DB_NAME, 2);
     req.onupgradeneeded = () => {
-      req.result.createObjectStore(META, { keyPath: 'key' });
-      req.result.createObjectStore(DATA);
+      const db = req.result;
+      if (!db.objectStoreNames.contains(META)) db.createObjectStore(META, { keyPath: 'key' });
+      if (!db.objectStoreNames.contains(DATA)) db.createObjectStore(DATA);
+      if (!db.objectStoreNames.contains('games')) db.createObjectStore('games', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('jars')) db.createObjectStore('jars');
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -69,5 +72,39 @@ export async function deleteSlot(key: string) {
   const tx = (await db()).transaction([META, DATA], 'readwrite');
   tx.objectStore(META).delete(key);
   tx.objectStore(DATA).delete(key);
+  await committed(tx);
+}
+
+export interface LibraryGame {
+  id: string;
+  name: string;
+  vendor: string;
+  fileName: string;
+  played: number;
+  icon: string;
+}
+
+export async function listGames(): Promise<LibraryGame[]> {
+  const tx = (await db()).transaction('games');
+  const games = await done(tx.objectStore('games').getAll()) as LibraryGame[];
+  return games.sort((a, b) => b.played - a.played);
+}
+
+export async function putGame(meta: LibraryGame, bytes: Uint8Array) {
+  const tx = (await db()).transaction(['games', 'jars'], 'readwrite');
+  tx.objectStore('games').put(meta);
+  tx.objectStore('jars').put(bytes, meta.id);
+  await committed(tx);
+}
+
+export async function readGame(id: string): Promise<Uint8Array | undefined> {
+  const tx = (await db()).transaction('jars');
+  return done(tx.objectStore('jars').get(id));
+}
+
+export async function deleteGame(id: string) {
+  const tx = (await db()).transaction(['games', 'jars'], 'readwrite');
+  tx.objectStore('games').delete(id);
+  tx.objectStore('jars').delete(id);
   await committed(tx);
 }
